@@ -395,6 +395,17 @@ static const struct smi_node tas2781_hda = {
 	.bus_type = SMI_AUTO_DETECT,
 };
 
+static const struct smi_node max98390_hda = {
+	.instances = {
+		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
+		{}
+	},
+	.bus_type = SMI_I2C,
+};
+
 /*
  * Note new device-ids must also be added to ignore_serial_bus_ids in
  * drivers/acpi/scan.c: acpi_device_enumeration_by_parent().
@@ -408,6 +419,7 @@ static const struct acpi_device_id smi_acpi_ids[] = {
 	{ "CSC3557", (unsigned long)&cs35l57_hda },
 	{ "INT3515", (unsigned long)&int3515_data },
 	{ "TXNW2781", (unsigned long)&tas2781_hda },
+	{ "MAX98390", (unsigned long)&max98390_hda },
 	/* Non-conforming _HID for Cirrus Logic already released */
 	{ "CLSA0100", (unsigned long)&cs35l41_hda },
 	{ "CLSA0101", (unsigned long)&cs35l41_hda },

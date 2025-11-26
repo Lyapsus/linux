@@ -3030,6 +3030,29 @@ static void tas2781_fixup_txnw_i2c(struct hda_codec *cdc,
 	comp_generic_fixup(cdc, action, "i2c", "TXNW2781", "-%s:00-tas2781-hda.%d", 1);
 }
 
+static void max98390_fixup_i2c_four(struct hda_codec *cdc,
+	const struct hda_fixup *fix, int action)
+{
+	comp_generic_fixup(cdc, action, "i2c", "MAX98390",
+			 "-%s:00-max98390-hda.%d", 4);
+}
+
+static void alc298_fixup_galaxy_book4_coef(struct hda_codec *codec,
+	const struct hda_fixup *fix, int action)
+{
+	if (action != HDA_FIXUP_ACT_PROBE)
+		return;
+
+	alc_write_coef_idx(codec, 0x10, 0x0e21);
+}
+
+static void alc298_fixup_galaxy_book4_max98390(struct hda_codec *codec,
+	const struct hda_fixup *fix, int action)
+{
+	alc298_fixup_galaxy_book4_coef(codec, fix, action);
+	max98390_fixup_i2c_four(codec, fix, action);
+}
+
 static void yoga7_14arb7_fixup_i2c(struct hda_codec *cdc,
 	const struct hda_fixup *fix, int action)
 {
@@ -3631,6 +3654,7 @@ enum {
 	ALC298_FIXUP_SAMSUNG_AMP_V2_2_AMPS,
 	ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS,
 	ALC298_FIXUP_SAMSUNG_HEADPHONE_VERY_QUIET,
+	ALC298_FIXUP_GALAXY_BOOK4_MAX98390,
 	ALC256_FIXUP_SAMSUNG_HEADPHONE_VERY_QUIET,
 	ALC295_FIXUP_ASUS_MIC_NO_PRESENCE,
 	ALC269VC_FIXUP_ACER_VCOPPERBOX_PINS,
@@ -5301,6 +5325,12 @@ static const struct hda_fixup alc269_fixups[] = {
 			{ }
 		},
 	},
+	[ALC298_FIXUP_GALAXY_BOOK4_MAX98390] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc298_fixup_galaxy_book4_max98390,
+		.chained = true,
+		.chain_id = ALC298_FIXUP_SAMSUNG_HEADPHONE_VERY_QUIET,
+	},
 	[ALC256_FIXUP_SAMSUNG_HEADPHONE_VERY_QUIET] = {
 		.type = HDA_FIXUP_VERBS,
 		.v.verbs = (const struct hda_verb[]) {
@@ -6869,6 +6899,7 @@ static const struct hda_quirk alc269_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x144d, 0xc886, "Samsung Galaxy Book3 Pro (NP964XFG)", ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS),
 	SND_PCI_QUIRK(0x144d, 0xc1ca, "Samsung Galaxy Book3 Pro 360 (NP960QFG)", ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS),
 	SND_PCI_QUIRK(0x144d, 0xc1cc, "Samsung Galaxy Book3 Ultra (NT960XFH)", ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS),
+	SND_PCI_QUIRK(0x144d, 0xc892, "Samsung Galaxy Book4 Pro 360", ALC298_FIXUP_GALAXY_BOOK4_MAX98390),
 	SND_PCI_QUIRK(0x1458, 0xfa53, "Gigabyte BXBT-2807", ALC283_FIXUP_HEADSET_MIC),
 	SND_PCI_QUIRK(0x1462, 0xb120, "MSI Cubi MS-B120", ALC283_FIXUP_HEADSET_MIC),
 	SND_PCI_QUIRK(0x1462, 0xb171, "Cubi N 8GL (MS-B171)", ALC283_FIXUP_HEADSET_MIC),
