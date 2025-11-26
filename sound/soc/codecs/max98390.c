@@ -786,72 +786,81 @@ static struct snd_soc_dai_driver max98390_dai[] = {
 	}
 };
 
-static int max98390_dsm_init(struct snd_soc_component *component)
+static int max98390_load_dsm_internal(struct device *dev, struct regmap *regmap,
+						 const char *dsm_param_name)
 {
-	int ret;
-	int param_size, param_start_addr;
-	char filename[128];
-	const char *vendor, *product;
-	struct max98390_priv *max98390 =
-		snd_soc_component_get_drvdata(component);
 	const struct firmware *fw;
+	const char *vendor, *product;
+	char filename[128];
 	char *dsm_param;
+	int param_size, param_start_addr;
+	int ret;
 
 	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
 	product = dmi_get_system_info(DMI_PRODUCT_NAME);
 
-	if (!strcmp(max98390->dsm_param_name, "default")) {
-		if (vendor && product) {
+	if (!dsm_param_name || !strcmp(dsm_param_name, "default")) {
+		if (vendor && product)
 			snprintf(filename, sizeof(filename),
 				"dsm_param_%s_%s.bin", vendor, product);
-		} else {
-			sprintf(filename, "dsm_param.bin");
-		}
+		else
+			snprintf(filename, sizeof(filename), "dsm_param.bin");
 	} else {
-		snprintf(filename, sizeof(filename), "%s",
-			max98390->dsm_param_name);
+		snprintf(filename, sizeof(filename), "%s", dsm_param_name);
 	}
-	ret = request_firmware(&fw, filename, component->dev);
+
+	ret = request_firmware(&fw, filename, dev);
 	if (ret) {
-		ret = request_firmware(&fw, "dsm_param.bin", component->dev);
+		ret = request_firmware(&fw, "dsm_param.bin", dev);
 		if (ret) {
-			ret = request_firmware(&fw, "dsmparam.bin",
-				component->dev);
+			ret = request_firmware(&fw, "dsmparam.bin", dev);
 			if (ret)
-				goto err;
+				return ret;
 		}
 	}
 
-	dev_dbg(component->dev,
-		"max98390: param fw size %zd\n",
-		fw->size);
+	dev_dbg(dev, "max98390: param fw size %zd\n", fw->size);
 	if (fw->size < MAX98390_DSM_PARAM_MIN_SIZE) {
-		dev_err(component->dev,
-			"param fw is invalid.\n");
+		dev_err(dev, "param fw is invalid.\n");
 		ret = -EINVAL;
 		goto err_alloc;
 	}
+
 	dsm_param = (char *)fw->data;
 	param_start_addr = (dsm_param[0] & 0xff) | (dsm_param[1] & 0xff) << 8;
 	param_size = (dsm_param[2] & 0xff) | (dsm_param[3] & 0xff) << 8;
 	if (param_size > MAX98390_DSM_PARAM_MAX_SIZE ||
 		param_start_addr < MAX98390_IRQ_CTRL ||
 		fw->size < param_size + MAX98390_DSM_PAYLOAD_OFFSET) {
-		dev_err(component->dev,
-			"param fw is invalid.\n");
+		dev_err(dev, "param fw is invalid.\n");
 		ret = -EINVAL;
 		goto err_alloc;
 	}
-	regmap_write(max98390->regmap, MAX98390_R203A_AMP_EN, 0x80);
+
+	regmap_write(regmap, MAX98390_R203A_AMP_EN, 0x80);
 	dsm_param += MAX98390_DSM_PAYLOAD_OFFSET;
-	regmap_bulk_write(max98390->regmap, param_start_addr,
-		dsm_param, param_size);
-	regmap_write(max98390->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
+	regmap_bulk_write(regmap, param_start_addr, dsm_param, param_size);
+	regmap_write(regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
 
 err_alloc:
 	release_firmware(fw);
-err:
 	return ret;
+}
+
+int max98390_load_dsm_fw(struct device *dev, struct regmap *regmap,
+			       const char *dsm_param_name)
+{
+	return max98390_load_dsm_internal(dev, regmap, dsm_param_name);
+}
+EXPORT_SYMBOL_NS_GPL(max98390_load_dsm_fw, "SND_SOC_MAX98390");
+
+static int max98390_dsm_init(struct snd_soc_component *component)
+{
+	struct max98390_priv *max98390 =
+		snd_soc_component_get_drvdata(component);
+
+	return max98390_load_dsm_internal(component->dev, max98390->regmap,
+					       max98390->dsm_param_name);
 }
 
 static void max98390_init_regs(struct snd_soc_component *component)

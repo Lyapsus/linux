@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/property.h>
+#include <linux/dmi.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <sound/hda_codec.h>
@@ -27,6 +28,26 @@
 #define MAX98390_ACPI_PROP_DEV_INDEX	"maxim,dev-index"
 #define MAX98390_ACPI_PROP_SPK_POS	"maxim,speaker-position"
 #define MAX98390_ACPI_PROP_SPK_ID	"maxim,speaker-id"
+
+#if IS_ENABLED(CONFIG_DMI)
+static const struct dmi_system_id max98390_dsm_dmi_table[] = {
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "960QGK"),
+		},
+		.driver_data = (void *)"dsm_param_samsung_galaxybook4.bin",
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "940XGK"),
+		},
+		.driver_data = (void *)"dsm_param_samsung_galaxybook4.bin",
+	},
+	{}
+};
+#endif
 
 struct max98390_hda {
 	struct device *dev;
@@ -323,6 +344,23 @@ int max98390_hda_probe(struct device *dev, const char *device_name, int id, int 
 	if (ret)
 		return ret;
 
+#if IS_ENABLED(CONFIG_DMI)
+	{
+		const struct dmi_system_id *dmi_id;
+
+		dmi_id = dmi_first_match(max98390_dsm_dmi_table);
+		if (dmi_id)
+			dev_info(dev, "Loading DSM parameters from %s\n",
+				 (const char *)dmi_id->driver_data);
+		ret = max98390_load_dsm_fw(dev, ctx->regmap,
+				       dmi_id ? dmi_id->driver_data : NULL);
+	}
+#else
+	ret = max98390_load_dsm_fw(dev, ctx->regmap, NULL);
+#endif
+	if (ret)
+		dev_warn(dev, "DSM firmware load failed: %d\n", ret);
+
 	pm_runtime_set_autosuspend_delay(dev, 3000);
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_set_active(dev);
@@ -376,6 +414,7 @@ const struct dev_pm_ops max98390_hda_pm_ops = {
 };
 EXPORT_SYMBOL_NS_GPL(max98390_hda_pm_ops, "SND_HDA_SCODEC_MAX98390");
 
+MODULE_IMPORT_NS("SND_SOC_MAX98390");
 MODULE_DESCRIPTION("HDA MAX98390 driver");
 MODULE_AUTHOR("Lyapsus");
 MODULE_LICENSE("GPL");

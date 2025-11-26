@@ -664,4 +664,10 @@ struct max98390_priv {
 	unsigned int ambient_temp_value;
 	const char *dsm_param_name;
 };
+
+struct device;
+struct regmap;
+
+int max98390_load_dsm_fw(struct device *dev, struct regmap *regmap,
+			       const char *dsm_param_name);
 #endif
