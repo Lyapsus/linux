@@ -397,10 +397,10 @@ static const struct smi_node tas2781_hda = {
 
 static const struct smi_node max98390_hda = {
 	.instances = {
-		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
-		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
-		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
-		{ "max98390-hda", IRQ_RESOURCE_AUTO, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_NONE, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_NONE, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_NONE, 0 },
+		{ "max98390-hda", IRQ_RESOURCE_NONE, 0 },
 		{}
 	},
 	.bus_type = SMI_I2C,
