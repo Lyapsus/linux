@@ -249,8 +249,27 @@ static int max98390_hda_acpi_probe(struct max98390_hda *ctx)
 	int ret;
 
 	ctx->adev = ACPI_COMPANION(ctx->dev);
-	ctx->index = clamp_t(int, client->addr - MAX98390_HDA_I2C_BASE_ADDR,
-				 0, MAX98390_HDA_MAX_AMPS - 1);
+
+	/* Samsung Galaxy Book 4 Pro/360 uses non-contiguous I2C addresses: 0x38, 0x39, 0x3c, 0x3d */
+	switch (client->addr) {
+	case 0x38:
+		ctx->index = 0;
+		break;
+	case 0x39:
+		ctx->index = 1;
+		break;
+	case 0x3c:
+		ctx->index = 2;
+		break;
+	case 0x3d:
+		ctx->index = 3;
+		break;
+	default:
+		dev_warn(ctx->dev, "Unknown I2C address 0x%02x, defaulting to index 0\n", client->addr);
+		ctx->index = 0;
+		break;
+	}
+
 	ctx->channel = ctx->index;
 
 	if (!ctx->adev)
