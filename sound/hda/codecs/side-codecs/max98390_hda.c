@@ -164,13 +164,13 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		return ret;
 
 	/*
-	 * Map TDM/I2S slots to amps based on index.
-	 * Assuming 2-channel I2S or TDM-2:
-	 * Amps 0,2 -> Left (Slot 0)
-	 * Amps 1,3 -> Right (Slot 1)
+	 * Map TDM slots to amps based on index.
+	 * Testing showed channels were swapped, so invert the mapping:
+	 * Amps 0,2 -> Right (Slot 1)
+	 * Amps 1,3 -> Left (Slot 0)
 	 */
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_CH_SRC_1,
-			   (ctx->index & 1));
+			   (ctx->index & 1) ^ 1);
 	if (ret)
 		return ret;
 

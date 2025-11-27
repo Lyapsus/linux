@@ -101,6 +101,7 @@ modules.order
 #
 /PKGBUILD
 /pacman/
+/pkg/
 
 #
 # We don't want to ignore the following even if they are dot-files
