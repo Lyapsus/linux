@@ -140,7 +140,9 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	ret = regmap_write(ctx->regmap, MAX98390_PWR_GATE_CTL, 0x00);
 	if (ret)
 		return ret;
-	ret = regmap_write(ctx->regmap, MAX98390_PCM_RX_EN_A, 0x03);
+
+	/* Match Windows: Enable RX channels 3,4,5,6 (0x78 = 0b01111000) */
+	ret = regmap_write(ctx->regmap, MAX98390_PCM_RX_EN_A, 0x78);
 	if (ret)
 		return ret;
 	ret = regmap_write(ctx->regmap, MAX98390_ENV_TRACK_VOUT_HEADROOM, 0x0e);
@@ -153,25 +155,22 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	if (ret)
 		return ret;
 	/*
-	 * Use Format 7 (0xF8) to match Windows configuration.
-	 * 0xF8 = 0b11111000:
-	 *   Bits 6-7: 11 = 32-bit samples (CHANSZ_32)
-	 *   Bits 3-5: 111 = Format 7 (undocumented, but Windows uses it)
-	 *   Lower bits: 000
+	 * EXACT Windows register values from netstate2 analysis:
 	 *
-	 * TDM Mode 1 (Format 4) worked for DAC path but caused white noise
-	 * with DSP firmware. Windows netstate2 analysis suggests Format 7.
+	 * 0x2024 PCM_MODE_CFG = 0xF8 (Format 7, 32-bit)
+	 * 0x2027 PCM_SR_SETUP = 0x01 (sample rate config)
+	 * 0x2021 PCM_CH_SRC_1 = NOT SET (uses chip default)
 	 */
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_MODE_CFG, 0xF8);
 	if (ret)
 		return ret;
 
-	/*
-	 * Map TDM slots to amps based on index.
-	 * Testing showed channels were swapped, so invert the mapping:
-	 * Amps 0,2 -> Right (Slot 1)
-	 * Amps 1,3 -> Left (Slot 0)
-	 */
+	ret = regmap_write(ctx->regmap, MAX98390_PCM_SR_SETUP, 0x01);
+	if (ret)
+		return ret;
+
+	/* Windows doesn't set PCM_CH_SRC_1 - use chip default (0x00) */
+	/* But testing showed swap needed, so try inverted mapping */
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_CH_SRC_1,
 			   (ctx->index & 1) ^ 1);
 	if (ret)
