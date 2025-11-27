@@ -141,8 +141,12 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	if (ret)
 		return ret;
 
-	/* Match Windows: Enable RX channels 3,4,5,6 (0x78 = 0b01111000) */
-	ret = regmap_write(ctx->regmap, MAX98390_PCM_RX_EN_A, 0x78);
+	/*
+	 * Enable RX channels 0,1 (0x03) - matches Linux ALSA slot usage.
+	 * Windows uses 0x78 (Ch 3-6) but Windows Realtek driver likely sends
+	 * on different TDM slots. Linux HDA sends on Slots 0,1.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_PCM_RX_EN_A, 0x03);
 	if (ret)
 		return ret;
 	ret = regmap_write(ctx->regmap, MAX98390_ENV_TRACK_VOUT_HEADROOM, 0x0e);
