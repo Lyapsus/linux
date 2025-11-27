@@ -159,7 +159,7 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		return ret;
 	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
 				 MAX98390_PCM_MODE_CFG_FORMAT_MASK,
-				 MAX98390_PCM_FORMAT_I2S << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
+				 MAX98390_PCM_FORMAT_TDM_MODE1 << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
 	if (ret)
 		return ret;
 
