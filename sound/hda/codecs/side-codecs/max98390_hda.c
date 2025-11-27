@@ -159,22 +159,31 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	if (ret)
 		return ret;
 	/*
-	 * EXACT Windows register values from netstate2 analysis:
+	 * Back to TDM Mode 1 (proven working in v11) with improvements:
+	 * - TDM Mode 1 (Format 4) + 32-bit: DAC path works perfectly
+	 * - SR_SETUP = 0x08 (48kHz): Match actual HDA stream sample rate
+	 * - Channel swap: Fix L/R inversion
 	 *
-	 * 0x2024 PCM_MODE_CFG = 0xF8 (Format 7, 32-bit)
-	 * 0x2027 PCM_SR_SETUP = 0x01 (sample rate config)
-	 * 0x2021 PCM_CH_SRC_1 = NOT SET (uses chip default)
+	 * Format 7 (0xF8) caused complete silence - incompatible with our setup.
 	 */
-	ret = regmap_write(ctx->regmap, MAX98390_PCM_MODE_CFG, 0xF8);
+	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
+				 MAX98390_PCM_MODE_CFG_CHANSZ_MASK,
+				 MAX98390_PCM_MODE_CFG_CHANSZ_32);
 	if (ret)
 		return ret;
 
-	ret = regmap_write(ctx->regmap, MAX98390_PCM_SR_SETUP, 0x01);
+	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
+				 MAX98390_PCM_MODE_CFG_FORMAT_MASK,
+				 MAX98390_PCM_FORMAT_TDM_MODE1 << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
 	if (ret)
 		return ret;
 
-	/* Windows doesn't set PCM_CH_SRC_1 - use chip default (0x00) */
-	/* But testing showed swap needed, so try inverted mapping */
+	/* Set 48kHz sample rate to match HDA stream */
+	ret = regmap_write(ctx->regmap, MAX98390_PCM_SR_SETUP, 0x08);
+	if (ret)
+		return ret;
+
+	/* Inverted channel mapping to fix L/R swap (proven needed in v11) */
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_CH_SRC_1,
 			   (ctx->index & 1) ^ 1);
 	if (ret)
