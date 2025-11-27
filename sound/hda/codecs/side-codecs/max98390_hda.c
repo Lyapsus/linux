@@ -152,14 +152,17 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	ret = regmap_write(ctx->regmap, MAX98390_FET_SCALING3, 0x03);
 	if (ret)
 		return ret;
-	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
-				 MAX98390_PCM_MODE_CFG_CHANSZ_MASK,
-				 MAX98390_PCM_MODE_CFG_CHANSZ_32);
-	if (ret)
-		return ret;
-	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
-				 MAX98390_PCM_MODE_CFG_FORMAT_MASK,
-				 MAX98390_PCM_FORMAT_TDM_MODE1 << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
+	/*
+	 * Use Format 7 (0xF8) to match Windows configuration.
+	 * 0xF8 = 0b11111000:
+	 *   Bits 6-7: 11 = 32-bit samples (CHANSZ_32)
+	 *   Bits 3-5: 111 = Format 7 (undocumented, but Windows uses it)
+	 *   Lower bits: 000
+	 *
+	 * TDM Mode 1 (Format 4) worked for DAC path but caused white noise
+	 * with DSP firmware. Windows netstate2 analysis suggests Format 7.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_PCM_MODE_CFG, 0xF8);
 	if (ret)
 		return ret;
 
