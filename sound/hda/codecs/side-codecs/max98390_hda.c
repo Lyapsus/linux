@@ -224,6 +224,23 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	if (ret)
 		return ret;
 
+	/*
+	 * S0002 EC firmware defaults to 100% volume, causing buzzing/overheating
+	 * on startup. We attenuate digital volume by -20dB to make it safe.
+	 * 0xa0 = 0dB, 0.5dB steps. -20dB = 0dB - 40 steps = 160 - 40 = 120 = 0x78
+	 */
+	ret = regmap_write(ctx->regmap, DSM_VOL_CTRL, 0x78);
+	if (ret)
+		return ret;
+
+	/*
+	 * Limit Boost Output Voltage to 6.5V (0x00) instead of default 10V (0x1c).
+	 * Without DSM speaker protection, 10V is too high for these small speakers.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_BOOST_CTRL0, 0x00);
+	if (ret)
+		return ret;
+
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
 			   MAX98390_AMP_EN_MASK, 0);
@@ -232,15 +249,16 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	/* Log critical register values for diagnostics */
 	{
-		unsigned int spk_gain, boost_ctrl, amp_level;
+		unsigned int spk_gain, boost_ctrl, amp_level, dsm_vol;
 
 		regmap_read(ctx->regmap, MAX98390_R203D_SPK_GAIN, &spk_gain);
 		regmap_read(ctx->regmap, MAX98390_BOOST_CTRL0, &boost_ctrl);
 		regmap_read(ctx->regmap, MAX98390_SPK_SRC_SEL, &amp_level);
+		regmap_read(ctx->regmap, DSM_VOL_CTRL, &dsm_vol);
 
 		dev_info(ctx->dev,
-			 "Amp #%d registers: SPK_GAIN=0x%02x BOOST_CTRL0=0x%02x SPK_SRC_SEL=0x%02x\n",
-			 ctx->index, spk_gain, boost_ctrl, amp_level);
+			 "Amp #%d registers: SPK_GAIN=0x%02x BOOST_CTRL0=0x%02x SPK_SRC_SEL=0x%02x DSM_VOL=0x%02x\n",
+			 ctx->index, spk_gain, boost_ctrl, amp_level, dsm_vol);
 	}
 
 	return 0;
