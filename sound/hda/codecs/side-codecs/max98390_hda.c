@@ -214,11 +214,34 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	if (ret)
 		return ret;
 
+	/*
+	 * Set minimum speaker gain (+3dB) to prevent excessive volume.
+	 * Default/unset value could be as high as +21dB causing dangerously
+	 * loud output. Users can increase software volume if needed.
+	 * This is a safety measure to protect speakers and hearing.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_R203D_SPK_GAIN, 0);
+	if (ret)
+		return ret;
+
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
 			   MAX98390_AMP_EN_MASK, 0);
 	regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
 			   MAX98390_GLOBAL_EN_MASK, 0);
+
+	/* Log critical register values for diagnostics */
+	{
+		unsigned int spk_gain, boost_ctrl, amp_level;
+
+		regmap_read(ctx->regmap, MAX98390_R203D_SPK_GAIN, &spk_gain);
+		regmap_read(ctx->regmap, MAX98390_BOOST_CTRL0, &boost_ctrl);
+		regmap_read(ctx->regmap, MAX98390_SPK_SRC_SEL, &amp_level);
+
+		dev_info(ctx->dev,
+			 "Amp #%d registers: SPK_GAIN=0x%02x BOOST_CTRL0=0x%02x SPK_SRC_SEL=0x%02x\n",
+			 ctx->index, spk_gain, boost_ctrl, amp_level);
+	}
 
 	return 0;
 }
