@@ -15,6 +15,7 @@
 #include <linux/dmi.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
+#include <linux/mutex.h>
 #include <sound/hda_codec.h>
 
 #include "hda_component.h"
@@ -28,26 +29,6 @@
 #define MAX98390_ACPI_PROP_DEV_INDEX "maxim,dev-index"
 #define MAX98390_ACPI_PROP_SPK_POS "maxim,speaker-position"
 #define MAX98390_ACPI_PROP_SPK_ID "maxim,speaker-id"
-
-#if IS_ENABLED(CONFIG_DMI)
-static const struct dmi_system_id max98390_dsm_dmi_table[] = {
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "960QGK"),
-		},
-		.driver_data = (void *)"dsm_param_samsung_galaxybook4.bin",
-	},
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "940XGK"),
-		},
-		.driver_data = (void *)"dsm_param_samsung_galaxybook4.bin",
-	},
-	{}
-};
-#endif
 
 struct max98390_hda {
 	struct device *dev;
@@ -138,31 +119,6 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	regmap_write(ctx->regmap, MAX98390_SOFTWARE_RESET, 0x01);
 	msleep(20);
-
-	/*
-	 * EXPERIMENTAL: Enable DSP without loading firmware (v19-alpha conservative test)
-	 *
-	 * Background:
-	 * - v17/v18: DSP disabled, audio works but DSM_VOL_CTRL ineffective
-	 * - v17 WITH firmware: DSP enabled via firmware load, caused static noise
-	 * - Upstream kernel ONLY enables DSP after successful firmware load
-	 *
-	 * This is UNTESTED - upstream never enables DSP without firmware.
-	 * We're testing if DSP can run in bypass/passthrough mode.
-	 *
-	 * If this causes noise/issues, we know DSP requires firmware to function.
-	 * If it works, we can add DSMIG protection features in v20.
-	 *
-	 * SAFETY: Not enabling DSMIG_ENABLES yet - testing DSP enable alone first.
-	 */
-	ret = regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
-	if (ret) {
-		dev_err(ctx->dev, "Failed to enable DSP: %d\n", ret);
-		return ret;
-	}
-
-	dev_info(ctx->dev,
-		 "DSP enabled WITHOUT firmware (experimental - v19-alpha)\n");
 
 	ret = regmap_write(ctx->regmap, MAX98390_CLK_MON, 0x6f);
 	if (ret)
@@ -259,12 +215,41 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		return ret;
 
 	/*
-	 * Limit Boost Output Voltage to 6.5V (0x00) instead of default 10V (0x1c).
-	 * Without DSM speaker protection, 10V is too high for these small speakers.
+	 * v20: Increase Boost Voltage conservatively to 8.0V (0x0C).
+	 * v19-alpha (6.5V) was safe but lacked punch. 10V is too high for S0002.
 	 */
-	ret = regmap_write(ctx->regmap, MAX98390_BOOST_CTRL0, 0x00);
+	ret = regmap_write(ctx->regmap, MAX98390_BOOST_CTRL0, 0x0C);
 	if (ret)
 		return ret;
+
+	/*
+	 * v20: Enable DSM Protection & Bass Extension (0x19)
+	 * Bit 0: Thermal Prot (1)
+	 * Bit 3: Excursion Prot (1)
+	 * Bit 4: Bass Ext (1)
+	 *
+	 * MUST be written before DSP_GLOBAL_EN=1.
+	 */
+	ret = regmap_write(ctx->regmap, DSMIG_EN, 0x19);
+	if (ret)
+		return ret;
+
+	/*
+	 * v20: Enable DSP at the END of initialization.
+	 * Datasheet Warning: Do not change DSM enables while EN=1.
+	 * We have configured DSMIG_EN (0x23E0) above, now we enable the DSP.
+	 *
+	 * This runs the DSP in ROM/Bypass mode with active protection.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
+	if (ret) {
+		dev_err(ctx->dev, "Failed to enable DSP: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(
+		ctx->dev,
+		"v20: DSP enabled with Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
@@ -296,22 +281,34 @@ static int max98390_hda_start(struct max98390_hda *ctx)
 {
 	int ret;
 
-	ret = regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
-				 MAX98390_GLOBAL_EN_MASK,
-				 MAX98390_GLOBAL_EN_MASK);
+	/*
+	 * Datasheet Rule: SPK_EN is a static bit and should not be changed while EN = 1.
+	 * Sequence:
+	 * 1. Set SPK_EN = 1 (Prepare amp)
+	 * 2. Set GLOBAL_EN = 1 (Turn on chip)
+	 */
+	ret = regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
+				 MAX98390_AMP_EN_MASK, MAX98390_AMP_EN_MASK);
 	if (ret)
 		return ret;
 
-	return regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
-				  MAX98390_AMP_EN_MASK, MAX98390_AMP_EN_MASK);
+	return regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
+				  MAX98390_GLOBAL_EN_MASK,
+				  MAX98390_GLOBAL_EN_MASK);
 }
 
 static void max98390_hda_stop(struct max98390_hda *ctx)
 {
-	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
-			   MAX98390_AMP_EN_MASK, 0);
+	/*
+	 * Datasheet Rule: SPK_EN is a static bit and should not be changed while EN = 1.
+	 * Sequence:
+	 * 1. Set GLOBAL_EN = 0 (Turn off chip)
+	 * 2. Set SPK_EN = 0 (Disable amp)
+	 */
 	regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
 			   MAX98390_GLOBAL_EN_MASK, 0);
+	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
+			   MAX98390_AMP_EN_MASK, 0);
 }
 
 static void max98390_hda_playback_hook(struct device *dev, int action)
@@ -481,22 +478,11 @@ int max98390_hda_probe(struct device *dev, const char *device_name, int id,
 	if (ret)
 		goto err_mutex;
 
-#if IS_ENABLED(CONFIG_DMI)
-	{
-		const struct dmi_system_id *dmi_id;
-
-		dmi_id = dmi_first_match(max98390_dsm_dmi_table);
-		if (dmi_id)
-			dev_info(dev, "Loading DSM parameters from %s\n",
-				 (const char *)dmi_id->driver_data);
-		ret = max98390_load_dsm_fw(dev, ctx->regmap,
-					   dmi_id ? dmi_id->driver_data : NULL);
-	}
-#else
-	ret = max98390_load_dsm_fw(dev, ctx->regmap, NULL);
-#endif
-	if (ret)
-		dev_warn(dev, "DSM firmware load failed: %d\n", ret);
+	/*
+	 * v20: Explicitly skip firmware loading.
+	 * We are manually configuring the DSP in max98390_hda_init
+	 * to avoid the white noise issues caused by the Windows blob.
+	 */
 
 	pm_runtime_set_autosuspend_delay(dev, 3000);
 	pm_runtime_use_autosuspend(dev);
