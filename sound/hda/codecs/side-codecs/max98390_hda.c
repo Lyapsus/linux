@@ -22,12 +22,12 @@
 #include "../generic.h"
 #include "../../soc/codecs/max98390.h"
 
-#define MAX98390_HDA_I2C_BASE_ADDR	0x38
-#define MAX98390_HDA_MAX_AMPS		4
+#define MAX98390_HDA_I2C_BASE_ADDR 0x38
+#define MAX98390_HDA_MAX_AMPS 4
 
-#define MAX98390_ACPI_PROP_DEV_INDEX	"maxim,dev-index"
-#define MAX98390_ACPI_PROP_SPK_POS	"maxim,speaker-position"
-#define MAX98390_ACPI_PROP_SPK_ID	"maxim,speaker-id"
+#define MAX98390_ACPI_PROP_DEV_INDEX "maxim,dev-index"
+#define MAX98390_ACPI_PROP_SPK_POS "maxim,speaker-position"
+#define MAX98390_ACPI_PROP_SPK_ID "maxim,speaker-id"
 
 #if IS_ENABLED(CONFIG_DMI)
 static const struct dmi_system_id max98390_dsm_dmi_table[] = {
@@ -55,6 +55,7 @@ struct max98390_hda {
 	struct gpio_desc *reset_gpio;
 	struct acpi_device *adev;
 	struct hda_codec *codec;
+	struct mutex lock; /* Protects playback/PM state transitions */
 	int index;
 	int channel;
 	bool playing;
@@ -75,27 +76,31 @@ static void max98390_hda_hw_reset(struct max98390_hda *ctx)
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	usleep_range(1000, 2000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(1000, 2000);
+	/* MAX98390 datasheet: min 10ms delay before first I2C access after reset */
+	usleep_range(10000, 11000);
 }
 
-static int max98390_hda_program_slots(struct max98390_hda *ctx, u32 v_slot, u32 i_slot)
+static int max98390_hda_program_slots(struct max98390_hda *ctx, u32 v_slot,
+				      u32 i_slot)
 {
 	int ret;
 
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_CH_SRC_2,
-			((i_slot & 0xf) << 4) | (v_slot & 0xf));
+			   ((i_slot & 0xf) << 4) | (v_slot & 0xf));
 	if (ret)
 		return ret;
 
 	if (v_slot < 8) {
-		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_HIZ_CTRL_A,
+		ret = regmap_update_bits(ctx->regmap,
+					 MAX98390_PCM_TX_HIZ_CTRL_A,
 					 BIT(v_slot), 0);
 		if (ret)
 			return ret;
 		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_EN_A,
 					 BIT(v_slot), BIT(v_slot));
 	} else {
-		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_HIZ_CTRL_B,
+		ret = regmap_update_bits(ctx->regmap,
+					 MAX98390_PCM_TX_HIZ_CTRL_B,
 					 BIT(v_slot - 8), 0);
 		if (ret)
 			return ret;
@@ -106,14 +111,16 @@ static int max98390_hda_program_slots(struct max98390_hda *ctx, u32 v_slot, u32 
 		return ret;
 
 	if (i_slot < 8) {
-		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_HIZ_CTRL_A,
+		ret = regmap_update_bits(ctx->regmap,
+					 MAX98390_PCM_TX_HIZ_CTRL_A,
 					 BIT(i_slot), 0);
 		if (ret)
 			return ret;
 		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_EN_A,
 					 BIT(i_slot), BIT(i_slot));
 	} else {
-		ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_TX_HIZ_CTRL_B,
+		ret = regmap_update_bits(ctx->regmap,
+					 MAX98390_PCM_TX_HIZ_CTRL_B,
 					 BIT(i_slot - 8), 0);
 		if (ret)
 			return ret;
@@ -126,6 +133,7 @@ static int max98390_hda_program_slots(struct max98390_hda *ctx, u32 v_slot, u32 
 
 static int max98390_hda_init(struct max98390_hda *ctx)
 {
+	unsigned int val;
 	int ret;
 
 	regmap_write(ctx->regmap, MAX98390_SOFTWARE_RESET, 0x01);
@@ -174,9 +182,22 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	ret = regmap_update_bits(ctx->regmap, MAX98390_PCM_MODE_CFG,
 				 MAX98390_PCM_MODE_CFG_FORMAT_MASK,
-				 MAX98390_PCM_FORMAT_TDM_MODE1 << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
+				 MAX98390_PCM_FORMAT_TDM_MODE1
+					 << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT);
 	if (ret)
 		return ret;
+
+	/* Verify critical TDM mode configuration */
+	ret = regmap_read(ctx->regmap, MAX98390_PCM_MODE_CFG, &val);
+	if (ret)
+		return ret;
+	if ((val & MAX98390_PCM_MODE_CFG_FORMAT_MASK) !=
+	    (MAX98390_PCM_FORMAT_TDM_MODE1
+	     << MAX98390_PCM_MODE_CFG_FORMAT_SHIFT)) {
+		dev_err(ctx->dev, "Failed to set TDM Mode 1 (got 0x%02x)\n",
+			val);
+		return -EIO;
+	}
 
 	/* Set 48kHz sample rate to match HDA stream */
 	ret = regmap_write(ctx->regmap, MAX98390_PCM_SR_SETUP, 0x08);
@@ -195,9 +216,9 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
-			 MAX98390_AMP_EN_MASK, 0);
+			   MAX98390_AMP_EN_MASK, 0);
 	regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
-			 MAX98390_GLOBAL_EN_MASK, 0);
+			   MAX98390_GLOBAL_EN_MASK, 0);
 
 	return 0;
 }
@@ -207,20 +228,21 @@ static int max98390_hda_start(struct max98390_hda *ctx)
 	int ret;
 
 	ret = regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
-				 MAX98390_GLOBAL_EN_MASK, MAX98390_GLOBAL_EN_MASK);
+				 MAX98390_GLOBAL_EN_MASK,
+				 MAX98390_GLOBAL_EN_MASK);
 	if (ret)
 		return ret;
 
 	return regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
-				       MAX98390_AMP_EN_MASK, MAX98390_AMP_EN_MASK);
+				  MAX98390_AMP_EN_MASK, MAX98390_AMP_EN_MASK);
 }
 
 static void max98390_hda_stop(struct max98390_hda *ctx)
 {
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
-			 MAX98390_AMP_EN_MASK, 0);
+			   MAX98390_AMP_EN_MASK, 0);
 	regmap_update_bits(ctx->regmap, MAX98390_R23FF_GLOBAL_EN,
-			 MAX98390_GLOBAL_EN_MASK, 0);
+			   MAX98390_GLOBAL_EN_MASK, 0);
 }
 
 static void max98390_hda_playback_hook(struct device *dev, int action)
@@ -230,17 +252,26 @@ static void max98390_hda_playback_hook(struct device *dev, int action)
 	switch (action) {
 	case HDA_GEN_PCM_ACT_OPEN:
 		pm_runtime_get_sync(dev);
+		mutex_lock(&ctx->lock);
 		ctx->playing = true;
+		mutex_unlock(&ctx->lock);
 		break;
 	case HDA_GEN_PCM_ACT_PREPARE:
-		max98390_hda_start(ctx);
+		mutex_lock(&ctx->lock);
+		if (!ctx->suspended)
+			max98390_hda_start(ctx);
+		mutex_unlock(&ctx->lock);
 		break;
 	case HDA_GEN_PCM_ACT_CLEANUP:
+		mutex_lock(&ctx->lock);
 		max98390_hda_stop(ctx);
+		mutex_unlock(&ctx->lock);
 		break;
 	case HDA_GEN_PCM_ACT_CLOSE:
+		mutex_lock(&ctx->lock);
 		max98390_hda_stop(ctx);
 		ctx->playing = false;
+		mutex_unlock(&ctx->lock);
 		pm_runtime_mark_last_busy(dev);
 		pm_runtime_put_autosuspend(dev);
 		break;
@@ -250,7 +281,7 @@ static void max98390_hda_playback_hook(struct device *dev, int action)
 }
 
 static int max98390_hda_bind(struct device *dev, struct device *master,
-			      void *master_data)
+			     void *master_data)
 {
 	struct max98390_hda *ctx = dev_get_drvdata(dev);
 	struct hda_component_parent *parent = master_data;
@@ -312,7 +343,9 @@ static int max98390_hda_acpi_probe(struct max98390_hda *ctx)
 		ctx->index = 3;
 		break;
 	default:
-		dev_warn(ctx->dev, "Unknown I2C address 0x%02x, defaulting to index 0\n", client->addr);
+		dev_warn(ctx->dev,
+			 "Unknown I2C address 0x%02x, defaulting to index 0\n",
+			 client->addr);
 		ctx->index = 0;
 		break;
 	}
@@ -323,24 +356,28 @@ static int max98390_hda_acpi_probe(struct max98390_hda *ctx)
 		return 0;
 
 	if (!device_property_read_u32(ctx->dev, MAX98390_ACPI_PROP_DEV_INDEX,
-					    &value) && value < MAX98390_HDA_MAX_AMPS)
+				      &value) &&
+	    value < MAX98390_HDA_MAX_AMPS)
 		ctx->index = value;
 	else if (!acpi_dev_uid_to_integer(ctx->adev, &uid) &&
 		 uid < MAX98390_HDA_MAX_AMPS)
 		ctx->index = uid;
 
-	if (!device_property_read_u32(ctx->dev, MAX98390_ACPI_PROP_SPK_POS, &value) &&
+	if (!device_property_read_u32(ctx->dev, MAX98390_ACPI_PROP_SPK_POS,
+				      &value) &&
 	    value < MAX98390_HDA_MAX_AMPS)
 		ctx->channel = value;
 
-	ret = device_property_read_u32(ctx->dev, MAX98390_ACPI_PROP_SPK_ID, &value);
+	ret = device_property_read_u32(ctx->dev, MAX98390_ACPI_PROP_SPK_ID,
+				       &value);
 	if (!ret)
 		dev_dbg(ctx->dev, "Speaker ID %u\n", value);
 
 	return 0;
 }
 
-int max98390_hda_probe(struct device *dev, const char *device_name, int id, int irq)
+int max98390_hda_probe(struct device *dev, const char *device_name, int id,
+		       int irq)
 {
 	struct max98390_hda *ctx;
 	struct i2c_client *client = to_i2c_client(dev);
@@ -352,23 +389,28 @@ int max98390_hda_probe(struct device *dev, const char *device_name, int id, int 
 
 	ctx->dev = dev;
 	dev_set_drvdata(dev, ctx);
+	mutex_init(&ctx->lock);
 
 	ctx->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(ctx->reset_gpio))
-		return PTR_ERR(ctx->reset_gpio);
+	if (IS_ERR(ctx->reset_gpio)) {
+		ret = PTR_ERR(ctx->reset_gpio);
+		goto err_mutex;
+	}
 
 	ctx->regmap = devm_regmap_init_i2c(client, &max98390_hda_regmap_i2c);
-	if (IS_ERR(ctx->regmap))
-		return PTR_ERR(ctx->regmap);
+	if (IS_ERR(ctx->regmap)) {
+		ret = PTR_ERR(ctx->regmap);
+		goto err_mutex;
+	}
 
 	ret = max98390_hda_acpi_probe(ctx);
 	if (ret)
-		return ret;
+		goto err_mutex;
 
 	max98390_hda_hw_reset(ctx);
 	ret = max98390_hda_init(ctx);
 	if (ret)
-		return ret;
+		goto err_mutex;
 
 #if IS_ENABLED(CONFIG_DMI)
 	{
@@ -379,7 +421,7 @@ int max98390_hda_probe(struct device *dev, const char *device_name, int id, int 
 			dev_info(dev, "Loading DSM parameters from %s\n",
 				 (const char *)dmi_id->driver_data);
 		ret = max98390_load_dsm_fw(dev, ctx->regmap,
-				       dmi_id ? dmi_id->driver_data : NULL);
+					   dmi_id ? dmi_id->driver_data : NULL);
 	}
 #else
 	ret = max98390_load_dsm_fw(dev, ctx->regmap, NULL);
@@ -395,13 +437,19 @@ int max98390_hda_probe(struct device *dev, const char *device_name, int id, int 
 	ret = component_add(dev, &max98390_hda_comp_ops);
 	if (ret) {
 		pm_runtime_disable(dev);
-		return ret;
+		goto err_pm;
 	}
 
 	dev_info(dev, "MAX98390 HDA amp index %d channel %d initialised\n",
 		 ctx->index, ctx->channel);
 
 	return 0;
+
+err_pm:
+	max98390_hda_stop(ctx);
+err_mutex:
+	mutex_destroy(&ctx->lock);
+	return ret;
 }
 EXPORT_SYMBOL_NS_GPL(max98390_hda_probe, "SND_HDA_SCODEC_MAX98390");
 
@@ -412,6 +460,7 @@ void max98390_hda_remove(struct device *dev)
 	component_del(dev, &max98390_hda_comp_ops);
 	pm_runtime_disable(dev);
 	max98390_hda_stop(ctx);
+	mutex_destroy(&ctx->lock);
 }
 EXPORT_SYMBOL_NS_GPL(max98390_hda_remove, "SND_HDA_SCODEC_MAX98390");
 
@@ -419,9 +468,11 @@ static int max98390_hda_runtime_suspend(struct device *dev)
 {
 	struct max98390_hda *ctx = dev_get_drvdata(dev);
 
+	mutex_lock(&ctx->lock);
 	ctx->suspended = true;
 	if (ctx->playing)
 		max98390_hda_stop(ctx);
+	mutex_unlock(&ctx->lock);
 
 	return 0;
 }
@@ -430,7 +481,10 @@ static int max98390_hda_runtime_resume(struct device *dev)
 {
 	struct max98390_hda *ctx = dev_get_drvdata(dev);
 
+	mutex_lock(&ctx->lock);
 	ctx->suspended = false;
+	mutex_unlock(&ctx->lock);
+
 	return 0;
 }
 
