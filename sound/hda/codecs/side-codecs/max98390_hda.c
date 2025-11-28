@@ -139,6 +139,31 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	regmap_write(ctx->regmap, MAX98390_SOFTWARE_RESET, 0x01);
 	msleep(20);
 
+	/*
+	 * EXPERIMENTAL: Enable DSP without loading firmware (v19-alpha conservative test)
+	 *
+	 * Background:
+	 * - v17/v18: DSP disabled, audio works but DSM_VOL_CTRL ineffective
+	 * - v17 WITH firmware: DSP enabled via firmware load, caused static noise
+	 * - Upstream kernel ONLY enables DSP after successful firmware load
+	 *
+	 * This is UNTESTED - upstream never enables DSP without firmware.
+	 * We're testing if DSP can run in bypass/passthrough mode.
+	 *
+	 * If this causes noise/issues, we know DSP requires firmware to function.
+	 * If it works, we can add DSMIG protection features in v20.
+	 *
+	 * SAFETY: Not enabling DSMIG_ENABLES yet - testing DSP enable alone first.
+	 */
+	ret = regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
+	if (ret) {
+		dev_err(ctx->dev, "Failed to enable DSP: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(ctx->dev,
+		 "DSP enabled WITHOUT firmware (experimental - v19-alpha)\n");
+
 	ret = regmap_write(ctx->regmap, MAX98390_CLK_MON, 0x6f);
 	if (ret)
 		return ret;
@@ -249,16 +274,19 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	/* Log critical register values for diagnostics */
 	{
-		unsigned int spk_gain, boost_ctrl, amp_level, dsm_vol;
+		unsigned int spk_gain, boost_ctrl, amp_level, dsm_vol, dsp_en;
 
 		regmap_read(ctx->regmap, MAX98390_R203D_SPK_GAIN, &spk_gain);
 		regmap_read(ctx->regmap, MAX98390_BOOST_CTRL0, &boost_ctrl);
 		regmap_read(ctx->regmap, MAX98390_SPK_SRC_SEL, &amp_level);
 		regmap_read(ctx->regmap, DSM_VOL_CTRL, &dsm_vol);
+		regmap_read(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, &dsp_en);
 
-		dev_info(ctx->dev,
-			 "Amp #%d registers: SPK_GAIN=0x%02x BOOST_CTRL0=0x%02x SPK_SRC_SEL=0x%02x DSM_VOL=0x%02x\n",
-			 ctx->index, spk_gain, boost_ctrl, amp_level, dsm_vol);
+		dev_info(
+			ctx->dev,
+			"Amp #%d: SPK_GAIN=0x%02x BOOST=0x%02x SRC=0x%02x DSM_VOL=0x%02x DSP_EN=0x%02x\n",
+			ctx->index, spk_gain, boost_ctrl, amp_level, dsm_vol,
+			dsp_en);
 	}
 
 	return 0;
