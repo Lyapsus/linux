@@ -3043,7 +3043,11 @@ static void alc298_fixup_galaxy_book4_coef(struct hda_codec *codec,
 	if (action != HDA_FIXUP_ACT_PROBE)
 		return;
 
-	alc_write_coef_idx(codec, 0x10, 0x0e21);
+	/* v24: Use 0x0f21 (playback-active state) instead of 0x0e21 (idle state)
+	 * Windows RtHDDump analysis shows coefficient 0x10 differs between
+	 * silent (0x0e21) and playing (0x0f21) states. Bit 8 enables DSM path.
+	 */
+	alc_write_coef_idx(codec, 0x10, 0x0f21);
 }
 
 static void alc298_fixup_galaxy_book4_max98390(struct hda_codec *codec,
