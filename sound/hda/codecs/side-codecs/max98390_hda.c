@@ -223,50 +223,33 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		return ret;
 
 	/*
-	 * v22: Manually write DSM protection parameters.
-	 * We extracted these values from the Windows driver payload
-	 * (dsm_param_samsung_galaxybook4.bin).
+	 * v24: Load full firmware but force-disable DSM features (Bypass).
 	 *
-	 * Writing these specific thresholds allows us to enable the DSM protection
-	 * features (Thermal + Excursion) without loading the full firmware blob,
-	 * which was causing white noise (likely due to conflicting clock/format
-	 * settings in the blob).
+	 * Goal: Isolate source of white noise.
+	 * - If audio works: Firmware file is valid, but features (Bass/Prot) cause noise.
+	 * - If white noise: Firmware coefficients themselves are incompatible.
 	 */
-
-	/* Thermal Protection Threshold (0x238E) = 0xB0A5 */
-	regmap_write(ctx->regmap, 0x238E, 0xA5);
-	regmap_write(ctx->regmap, 0x238F, 0xB0);
-
-	/* Thermal Room Temperature (0x2390) = 0x0B00 */
-	regmap_write(ctx->regmap, 0x2390, 0x00);
-	regmap_write(ctx->regmap, 0x2391, 0x0B);
-
-	/* Thermal Resistance RDC (0x2392) = 0x00001E */
-	regmap_write(ctx->regmap, 0x2392, 0x1E);
-	regmap_write(ctx->regmap, 0x2393, 0x00);
-	regmap_write(ctx->regmap, 0x2394, 0x00);
-
-	/* Excursion Protection Threshold (0x23A6) = 0x00 */
-	regmap_write(ctx->regmap, 0x23A6, 0x00);
+	ret = max98390_load_dsm_fw(ctx->dev, ctx->regmap,
+				   "dsm_param_samsung_galaxybook4.bin");
+	if (ret) {
+		dev_warn(
+			ctx->dev,
+			"DSM firmware not found/loaded. Using simple bypass.\n");
+	} else {
+		dev_info(
+			ctx->dev,
+			"DSM firmware loaded. Disabling DSMIG_EN for v24 test.\n");
+		/*
+		 * Firmware load automatically enables DSP.
+		 * We must disable it to change DSMIG_EN safely.
+		 */
+		regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x00);
+		regmap_write(ctx->regmap, DSMIG_EN, 0x00);
+	}
 
 	/*
-	 * v20/v22: Enable DSM Protection & Bass Extension (0x19)
-	 * Bit 0: Thermal Prot (1)
-	 * Bit 3: Excursion Prot (1)
-	 * Bit 4: Bass Ext (1)
-	 *
-	 * MUST be written before DSP_GLOBAL_EN=1.
-	 */
-	ret = regmap_write(ctx->regmap, DSMIG_EN, 0x19);
-	if (ret)
-		return ret;
-
-	/*
-	 * v20: Enable DSP at the END of initialization.
-	 * Datasheet Warning: Do not change DSM enables while EN=1.
-	 * We have configured DSMIG_EN (0x23E0) above, now we enable the DSP.
-	 *
-	 * This runs the DSP in ROM/Bypass mode with active protection.
+	 * Enable DSP (Bypass mode if DSMIG_EN=0).
+	 * This MUST be the last step.
 	 */
 	ret = regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
 	if (ret) {
@@ -276,7 +259,8 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	dev_info(
 		ctx->dev,
-		"v24: DSP+Prot enabled (Realtek coef 0x10=0x0F21 for DSM path, Boost=8.0V)\n");
+		"v24: DSP enabled (Firmware loaded? %s, DSMIG_EN=0x00, Boost=8.0V)\n",
+		ret == 0 ? "Yes" : "No");
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
