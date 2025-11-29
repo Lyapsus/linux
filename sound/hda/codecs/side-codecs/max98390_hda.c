@@ -233,21 +233,21 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 	 * settings in the blob).
 	 */
 
-	/* Thermal Protection Threshold (0x238E) = 0x0565 */
-	regmap_write(ctx->regmap, 0x238E, 0x65);
-	regmap_write(ctx->regmap, 0x238F, 0x05);
+	/* Thermal Protection Threshold (0x238E) = 0xB0A5 */
+	regmap_write(ctx->regmap, 0x238E, 0xA5);
+	regmap_write(ctx->regmap, 0x238F, 0xB0);
 
-	/* Thermal Room Temperature (0x2390) = 0x0FD2 */
-	regmap_write(ctx->regmap, 0x2390, 0xD2);
-	regmap_write(ctx->regmap, 0x2391, 0x0F);
+	/* Thermal Room Temperature (0x2390) = 0x0B00 */
+	regmap_write(ctx->regmap, 0x2390, 0x00);
+	regmap_write(ctx->regmap, 0x2391, 0x0B);
 
-	/* Thermal Resistance RDC (0x2392) = 0x00D09C */
-	regmap_write(ctx->regmap, 0x2392, 0x9C);
-	regmap_write(ctx->regmap, 0x2393, 0xD0);
+	/* Thermal Resistance RDC (0x2392) = 0x00001E */
+	regmap_write(ctx->regmap, 0x2392, 0x1E);
+	regmap_write(ctx->regmap, 0x2393, 0x00);
 	regmap_write(ctx->regmap, 0x2394, 0x00);
 
-	/* Excursion Protection Threshold (0x23A6) = 0x83 */
-	regmap_write(ctx->regmap, 0x23A6, 0x83);
+	/* Excursion Protection Threshold (0x23A6) = 0x00 */
+	regmap_write(ctx->regmap, 0x23A6, 0x00);
 
 	/*
 	 * v20/v22: Enable DSM Protection & Bass Extension (0x19)
@@ -276,7 +276,7 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	dev_info(
 		ctx->dev,
-		"v22: DSP enabled with Manual Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
+		"v23: DSP enabled with CORRECTED Manual Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
