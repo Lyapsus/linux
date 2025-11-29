@@ -30,6 +30,11 @@
 #define MAX98390_ACPI_PROP_SPK_POS "maxim,speaker-position"
 #define MAX98390_ACPI_PROP_SPK_ID "maxim,speaker-id"
 
+static int dsm_mask;
+module_param(dsm_mask, int, 0444);
+MODULE_PARM_DESC(dsm_mask,
+		 "DSMIG_EN mask (default 0x00 bypass, 0x01 thermal, 0x10 bass)");
+
 struct max98390_hda {
 	struct device *dev;
 	struct regmap *regmap;
@@ -244,7 +249,7 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		 * We must disable it to change DSMIG_EN safely.
 		 */
 		regmap_write(ctx->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x00);
-		regmap_write(ctx->regmap, DSMIG_EN, 0x00);
+		regmap_write(ctx->regmap, DSMIG_EN, dsm_mask);
 	}
 
 	/*
@@ -259,8 +264,8 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	dev_info(
 		ctx->dev,
-		"v24: DSP enabled (Firmware loaded? %s, DSMIG_EN=0x00, Boost=8.0V)\n",
-		ret == 0 ? "Yes" : "No");
+		"v25: DSP enabled (Firmware loaded? %s, DSMIG_EN=0x%02x, Boost=8.0V)\n",
+		ret == 0 ? "Yes" : "No", dsm_mask);
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
