@@ -276,7 +276,7 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	dev_info(
 		ctx->dev,
-		"v23: DSP enabled with CORRECTED Manual Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
+		"v24: DSP+Prot enabled (Realtek coef 0x10=0x0F21 for DSM path, Boost=8.0V)\n");
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
