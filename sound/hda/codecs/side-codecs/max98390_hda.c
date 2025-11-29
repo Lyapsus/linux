@@ -223,7 +223,34 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 		return ret;
 
 	/*
-	 * v20: Enable DSM Protection & Bass Extension (0x19)
+	 * v22: Manually write DSM protection parameters.
+	 * We extracted these values from the Windows driver payload
+	 * (dsm_param_samsung_galaxybook4.bin).
+	 *
+	 * Writing these specific thresholds allows us to enable the DSM protection
+	 * features (Thermal + Excursion) without loading the full firmware blob,
+	 * which was causing white noise (likely due to conflicting clock/format
+	 * settings in the blob).
+	 */
+
+	/* Thermal Protection Threshold (0x238E) = 0x0565 */
+	regmap_write(ctx->regmap, 0x238E, 0x65);
+	regmap_write(ctx->regmap, 0x238F, 0x05);
+
+	/* Thermal Room Temperature (0x2390) = 0x0FD2 */
+	regmap_write(ctx->regmap, 0x2390, 0xD2);
+	regmap_write(ctx->regmap, 0x2391, 0x0F);
+
+	/* Thermal Resistance RDC (0x2392) = 0x00D09C */
+	regmap_write(ctx->regmap, 0x2392, 0x9C);
+	regmap_write(ctx->regmap, 0x2393, 0xD0);
+	regmap_write(ctx->regmap, 0x2394, 0x00);
+
+	/* Excursion Protection Threshold (0x23A6) = 0x83 */
+	regmap_write(ctx->regmap, 0x23A6, 0x83);
+
+	/*
+	 * v20/v22: Enable DSM Protection & Bass Extension (0x19)
 	 * Bit 0: Thermal Prot (1)
 	 * Bit 3: Excursion Prot (1)
 	 * Bit 4: Bass Ext (1)
@@ -249,7 +276,7 @@ static int max98390_hda_init(struct max98390_hda *ctx)
 
 	dev_info(
 		ctx->dev,
-		"v20: DSP enabled with Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
+		"v22: DSP enabled with Manual Prot+BassExt (0x23E0=0x19, Boost=8.0V)\n");
 
 	/* Ensure amp is disabled until playback starts */
 	regmap_update_bits(ctx->regmap, MAX98390_R203A_AMP_EN,
