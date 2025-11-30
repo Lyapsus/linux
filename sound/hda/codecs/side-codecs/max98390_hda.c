@@ -30,10 +30,11 @@
 #define MAX98390_ACPI_PROP_SPK_POS "maxim,speaker-position"
 #define MAX98390_ACPI_PROP_SPK_ID "maxim,speaker-id"
 
-static int dsm_mask;
+static int dsm_mask = 0x01;
 module_param(dsm_mask, int, 0444);
-MODULE_PARM_DESC(dsm_mask,
-		 "DSMIG_EN mask (default 0x00 bypass, 0x01 thermal, 0x10 bass)");
+MODULE_PARM_DESC(
+	dsm_mask,
+	"DSMIG_EN mask (default 0x01 thermal, 0x00 bypass, 0x10 bass)");
 
 struct max98390_hda {
 	struct device *dev;
