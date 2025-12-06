@@ -2980,9 +2980,39 @@ static void aw88399_fixup_i2c_two(struct hda_codec *cdc, const struct hda_fixup 
 }
 
 static void alc287_fixup_legion_16iax_aw88399(struct hda_codec *codec,
-				const struct hda_fixup *fix, int action)
+			const struct hda_fixup *fix, int action)
 {
+	struct alc_spec *spec = codec->spec;
+	struct hda_input_mux *imux = &spec->gen.input_mux;
+	int i;
+
+	switch (action) {
+	case HDA_FIXUP_ACT_PRE_PROBE:
+		/* Let user space manage internal/headset routing */
+		spec->gen.suppress_auto_mic = 1;
+		break;
+	case HDA_FIXUP_ACT_PROBE:
+		for (i = 0; i < imux->num_items; i++) {
+			if (spec->gen.imux_pins[i] == 0x12) {
+				spec->gen.cur_mux[0] = i;
+				break;
+			}
+		}
+		break;
+	case HDA_FIXUP_ACT_BUILD:
+		/*
+		 * Remap volume controls so UCM's "Speaker" device adjusts
+		 * the Post Mixer path (which feeds both tweeters and woofers)
+		 * while keeping the Speaker Playback Switch for UCM detection.
+		 */
+		rename_ctl(codec, "Speaker Playback Volume",
+			   "HDA Speaker Playback Volume");
+		rename_ctl(codec, "Post Mixer Analog Playback Volume",
+			   "Speaker Playback Volume");
+		break;
+	}
 }
+
 
 static void cs35l41_fixup_spi_two(struct hda_codec *codec, const struct hda_fixup *fix, int action)
 {
