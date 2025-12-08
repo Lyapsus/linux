@@ -58,7 +58,7 @@ static void aw88399_hda_playback_hook(struct device *dev, int action)
 	case HDA_GEN_PCM_ACT_PREPARE:
 		/* Start amplifier */
 		if (core)
-			aw88399_start(core, AW88399_SYNC_START);
+			aw88399_start(core, AW88399_ASYNC_START);
 		break;
 	case HDA_GEN_PCM_ACT_CLEANUP:
 		/* Stop amplifier */
@@ -421,7 +421,7 @@ static int aw88399_hda_runtime_resume(struct device *dev)
 	aw88399->suspended = false;
 
 	if (aw88399->core && aw88399->aw_dev && aw88399->playing)
-		aw88399_start(aw88399->core, AW88399_SYNC_START);
+		aw88399_start(aw88399->core, AW88399_ASYNC_START);
 
 	return 0;
 }
