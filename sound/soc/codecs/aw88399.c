@@ -14,7 +14,6 @@
 #include <linux/minmax.h>
 #include <linux/regmap.h>
 #include <linux/sort.h>
-#include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include "aw88399.h"
 #include "aw88395/aw88395_device.h"
@@ -1400,45 +1399,6 @@ int aw88399_stop(struct aw_device *aw_dev)
 }
 EXPORT_SYMBOL_GPL(aw88399_stop);
 
-static int aw88399_dai_hw_params(struct snd_pcm_substream *substream,
-				  struct snd_pcm_hw_params *params,
-				  struct snd_soc_dai *dai)
-{
-	struct snd_soc_component *component = dai->component;
-	unsigned int rate = params_rate(params);
-	unsigned int width = params_width(params);
-	unsigned int channels = params_channels(params);
-
-	dev_dbg(component->dev, "%s: rate=%u, width=%u, channels=%u, stream=%s\n",
-		__func__, rate, width, channels,
-		substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "playback" : "capture");
-
-	/* Firmware is configured for 48kHz S32_LE stereo only */
-	if (rate != 48000) {
-		dev_err(component->dev, "Only 48kHz supported, got %u\n", rate);
-		return -EINVAL;
-	}
-
-	if (width != 32) {
-		dev_err(component->dev, "Only 32-bit samples supported, got %u\n", width);
-		return -EINVAL;
-	}
-
-	if (channels != 2) {
-		dev_err(component->dev, "Only stereo supported, got %u channels\n", channels);
-		return -EINVAL;
-	}
-
-	/* Firmware handles I2S/format configuration via profile */
-	/* No additional register writes needed here */
-
-	return 0;
-}
-
-static const struct snd_soc_dai_ops aw88399_dai_ops = {
-	.hw_params = aw88399_dai_hw_params,
-};
-
 static struct snd_soc_dai_driver aw88399_dai[] = {
 	{
 		.name = "aw88399-aif",
@@ -1457,7 +1417,6 @@ static struct snd_soc_dai_driver aw88399_dai[] = {
 			.rates = AW88399_RATES,
 			.formats = AW88399_FORMATS,
 		},
-		.ops = &aw88399_dai_ops,
 	},
 };
 

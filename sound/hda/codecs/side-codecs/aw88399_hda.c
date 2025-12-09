@@ -32,6 +32,29 @@
 #define AW88399_ACPI_PROP_SPK_POS	"awinic,speaker-position"
 #define AW88399_ACPI_PROP_SPK_ID	"awinic,speaker-id"
 
+/* Hardware quirk flags */
+#define AW88399_QUIRK_SWAP_LR		BIT(0)
+
+struct aw88399_hda_quirk {
+	unsigned int flags;
+};
+
+static const struct aw88399_hda_quirk legion_83f5_quirk = {
+	.flags = AW88399_QUIRK_SWAP_LR,
+};
+
+static const struct dmi_system_id aw88399_hda_quirk_table[] = {
+	{
+		/* Lenovo Legion Pro 7 16IAX10H - I2C wired backwards */
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "83F5"),
+		},
+		.driver_data = (void *)&legion_83f5_quirk,
+	},
+	{}
+};
+
 static const struct regmap_config aw88399_hda_regmap_i2c = {
 	.reg_bits = 8,
 	.val_bits = 16,
@@ -302,16 +325,20 @@ metadata:
 	else
 		aw88399->channel = aw88399->index;
 
-	/*
-	 * Lenovo Legion Pro 7 16IAX10H (product 83F5, SSIDs 17aa:3906/3907/3d6c)
-	 * has I2C devices wired backwards: 0x34 is physically right, 0x35 is left.
-	 * Swap channels to correct L/R assignment. This is a hardware wiring issue
-	 * specific to this model, not a driver bug.
-	 */
-	if (dmi_match(DMI_PRODUCT_NAME, "83F5")) {
-		aw88399->channel = 1 - aw88399->channel;
-		dev_info(dev, "Legion quirk: swapped to channel %d (index %d, addr 0x%02x)\n",
-			 aw88399->channel, aw88399->index, i2c->addr);
+	/* Apply hardware quirks from DMI table */
+	{
+		const struct dmi_system_id *dmi_id;
+
+		dmi_id = dmi_first_match(aw88399_hda_quirk_table);
+		if (dmi_id) {
+			const struct aw88399_hda_quirk *quirk = dmi_id->driver_data;
+
+			if (quirk->flags & AW88399_QUIRK_SWAP_LR) {
+				aw88399->channel = 1 - aw88399->channel;
+				dev_info(dev, "Quirk: swapped to channel %d (index %d, addr 0x%02x)\n",
+					 aw88399->channel, aw88399->index, i2c->addr);
+			}
+		}
 	}
 
 	return 0;
