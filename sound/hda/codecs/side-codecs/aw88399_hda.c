@@ -21,9 +21,8 @@
 #include "../generic.h"
 #include "aw88399_hda.h"
 
-/* Import register definitions and init function from ASoC driver */
-#include "../../soc/codecs/aw88399.h"
-#include "../../soc/codecs/aw88395/aw88395_device.h"
+/* Shared AW88399 library */
+#include <sound/aw88399.h>
 
 #define AW88399_HDA_I2C_BASE_ADDR	0x34
 #define AW88399_HDA_MAX_AMPS		2
@@ -68,7 +67,6 @@ static void aw88399_hda_acpi_notify(acpi_handle handle, u32 event, struct device
 static void aw88399_hda_playback_hook(struct device *dev, int action)
 {
 	struct aw88399_hda *aw88399 = dev_get_drvdata(dev);
-	struct aw88399 *core = aw88399->core;
 	int ret = 0;
 
 	dev_dbg(dev, "Playback action: %d\n", action);
@@ -80,19 +78,21 @@ static void aw88399_hda_playback_hook(struct device *dev, int action)
 		break;
 	case HDA_GEN_PCM_ACT_PREPARE:
 		/* Start amplifier */
-		if (core)
-			aw88399_start(core, AW88399_ASYNC_START);
+		if (aw88399->aw_dev)
+			ret = aw88399_dev_start(aw88399->aw_dev);
+		if (ret)
+			dev_err(dev, "Failed to start amplifier: %d\n", ret);
 		break;
 	case HDA_GEN_PCM_ACT_CLEANUP:
 		/* Stop amplifier */
 		if (aw88399->aw_dev)
-			ret = aw88399_stop(aw88399->aw_dev);
+			ret = aw88399_dev_stop(aw88399->aw_dev);
 		if (ret)
 			dev_err(dev, "Failed to stop amplifier: %d\n", ret);
 		break;
 	case HDA_GEN_PCM_ACT_CLOSE:
 		if (aw88399->aw_dev)
-			aw88399_stop(aw88399->aw_dev);
+			aw88399_dev_stop(aw88399->aw_dev);
 		aw88399->playing = false;
 		pm_runtime_mark_last_busy(dev);
 		pm_runtime_put_autosuspend(dev);
@@ -234,38 +234,26 @@ static int aw88399_hda_init(struct aw88399_hda *aw88399)
 {
 	struct device *dev = aw88399->dev;
 	struct i2c_client *i2c = to_i2c_client(dev);
-	struct aw88399 *core;
 	int ret;
 
 	/* Hardware reset */
 	aw88399_hda_hw_reset(aw88399);
 
-	core = devm_kzalloc(dev, sizeof(*core), GFP_KERNEL);
-	if (!core)
-		return -ENOMEM;
-
-	mutex_init(&core->lock);
-	core->reset_gpio = aw88399->reset_gpio;
-	core->regmap = aw88399->regmap;
-
-	ret = aw88399_init(core, i2c, aw88399->regmap);
+	/* Initialize device using shared library */
+	ret = aw88399_dev_init(dev, i2c, aw88399->regmap, &aw88399->aw_dev);
 	if (ret)
 		return ret;
 
 	/* Set channel BEFORE loading firmware so ACF parser sees correct value */
-	if (core->aw_pa) {
-		if (aw88399->speaker_pos_valid)
-			core->aw_pa->channel = aw88399->speaker_pos;
-		else
-			core->aw_pa->channel = aw88399->channel;
-	}
+	if (aw88399->speaker_pos_valid)
+		aw88399_dev_set_channel(aw88399->aw_dev, aw88399->speaker_pos);
+	else
+		aw88399_dev_set_channel(aw88399->aw_dev, aw88399->channel);
 
-	ret = aw88399_request_firmware_file(core);
+	/* Load firmware */
+	ret = aw88399_dev_request_firmware(aw88399->aw_dev);
 	if (ret)
 		return ret;
-
-	aw88399->core = core;
-	aw88399->aw_dev = core->aw_pa;
 
 	return 0;
 }
@@ -417,9 +405,11 @@ void aw88399_hda_remove(struct device *dev)
 	pm_runtime_disable(dev);
 
 	if (aw88399->aw_dev)
-		aw88399_stop(aw88399->aw_dev);
+		aw88399_dev_stop(aw88399->aw_dev);
 
 	component_del(dev, &aw88399_hda_comp_ops);
+
+	aw88399_dev_deinit(aw88399->aw_dev);
 
 	dev_info(dev, "AW88399 HDA side codec removed\n");
 }
@@ -432,7 +422,7 @@ static int aw88399_hda_runtime_suspend(struct device *dev)
 	dev_dbg(dev, "Runtime suspend\n");
 
 	if (aw88399->aw_dev && aw88399->playing)
-		aw88399_stop(aw88399->aw_dev);
+		aw88399_dev_stop(aw88399->aw_dev);
 
 	aw88399->suspended = true;
 
@@ -447,8 +437,8 @@ static int aw88399_hda_runtime_resume(struct device *dev)
 
 	aw88399->suspended = false;
 
-	if (aw88399->core && aw88399->aw_dev && aw88399->playing)
-		aw88399_start(aw88399->core, AW88399_ASYNC_START);
+	if (aw88399->aw_dev && aw88399->playing)
+		aw88399_dev_start(aw88399->aw_dev);
 
 	return 0;
 }
@@ -461,7 +451,7 @@ static int aw88399_hda_system_suspend(struct device *dev)
 	dev_dbg(dev, "System suspend\n");
 
 	if (aw88399->aw_dev && aw88399->playing)
-		aw88399_stop(aw88399->aw_dev);
+		aw88399_dev_stop(aw88399->aw_dev);
 
 	ret = pm_runtime_force_suspend(dev);
 	if (ret)

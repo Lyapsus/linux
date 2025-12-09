@@ -14,16 +14,13 @@
 #include <sound/hda_codec.h>
 
 struct acpi_device;
-
-struct aw88399;
-struct aw_device;
+struct aw88399_dev;
 
 struct aw88399_hda {
 	struct device *dev;
 	struct regmap *regmap;
 	struct gpio_desc *reset_gpio;
-	struct aw_device *aw_dev;
-	struct aw88399 *core;
+	struct aw88399_dev *aw_dev;
 
 	struct hda_codec *codec;
 	struct acpi_device *adev;
