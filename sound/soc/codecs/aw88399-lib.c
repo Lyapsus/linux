@@ -382,14 +382,28 @@ EXPORT_SYMBOL_GPL(aw88399_dev_request_firmware);
  */
 int aw88399_dev_start(struct aw88399_dev *aw88399_dev)
 {
+	struct aw_device *aw_dev;
 	int ret, i;
 
 	if (!aw88399_dev || !aw88399_dev->aw_pa)
 		return -EINVAL;
 
+	aw_dev = aw88399_dev->aw_pa;
+
 	if (aw88399_dev->fw_status != AW88399_DEV_FW_OK) {
 		dev_err(aw88399_dev->dev, "firmware not ready");
 		return -EPERM;
+	}
+
+	/* Already running? */
+	if (aw_dev->status == AW88399_DEV_PW_ON)
+		return 0;
+
+	/* Update firmware/DSP config before starting (required for proper operation) */
+	ret = aw88395_dev_fw_update(aw_dev, AW88395_DSP_FW_UPDATE_OFF, true);
+	if (ret) {
+		dev_err(aw88399_dev->dev, "fw update failed: %d", ret);
+		return ret;
 	}
 
 	mutex_lock(&aw88399_dev->lock);
@@ -399,6 +413,8 @@ int aw88399_dev_start(struct aw88399_dev *aw88399_dev)
 		if (!ret)
 			break;
 		dev_warn(aw88399_dev->dev, "start attempt %d failed: %d", i + 1, ret);
+		/* On failure, try updating DSP firmware before retry */
+		aw88395_dev_fw_update(aw_dev, AW88395_DSP_FW_UPDATE_ON, true);
 		usleep_range(AW88399_2000_US, AW88399_2000_US + 100);
 	}
 
