@@ -115,6 +115,12 @@
 #define AW88399_DEV_DSP_CHECK_MAX	10
 #define AW88399_DEV_DEFAULT_CH		0
 
+/* Dither enable bit */
+#define AW88399_DITHER_EN_START_BIT	15
+#define AW88399_DITHER_EN_MASK		(~(1 << AW88399_DITHER_EN_START_BIT))
+#define AW88399_DITHER_EN_ENABLE_VALUE	(1 << AW88399_DITHER_EN_START_BIT)
+#define AW88399_DITHER_EN_DISABLE_VALUE	(0 << AW88399_DITHER_EN_START_BIT)
+
 /**
  * struct aw88399_dev - AW88399 device context
  * @dev: parent device
@@ -123,6 +129,7 @@
  * @aw_cfg: loaded firmware container
  * @lock: mutex for device access
  * @fw_status: firmware load status
+ * @dither_st: dither state from firmware (to restore after start)
  */
 struct aw88399_dev {
 	struct device *dev;
@@ -131,6 +138,7 @@ struct aw88399_dev {
 	struct aw_container *aw_cfg;
 	struct mutex lock;
 	int fw_status;
+	unsigned int dither_st;
 };
 
 /* Low-level register helpers */
@@ -151,6 +159,18 @@ static void aw88399_lib_dev_mute(struct aw_device *aw_dev, bool mute)
 				   ~AW88399_HMUTE_MASK, AW88399_HMUTE_DISABLE_VALUE);
 		aw88399_dev_set_volume(aw_dev, aw_dev->volume_desc.ctl_volume);
 	}
+}
+
+static void aw88399_dev_set_dither(struct aw88399_dev *aw88399_dev, bool dither)
+{
+	struct aw_device *aw_dev = aw88399_dev->aw_pa;
+
+	if (dither)
+		regmap_update_bits(aw_dev->regmap, AW88399_DBGCTRL_REG,
+				   ~AW88399_DITHER_EN_MASK, AW88399_DITHER_EN_ENABLE_VALUE);
+	else
+		regmap_update_bits(aw_dev->regmap, AW88399_DBGCTRL_REG,
+				   ~AW88399_DITHER_EN_MASK, AW88399_DITHER_EN_DISABLE_VALUE);
 }
 
 static void aw_dev_pwd(struct aw_device *aw_dev, bool pwd)
@@ -426,6 +446,9 @@ static int aw88399_dev_start_internal(struct aw88399_dev *aw88399_dev)
 		return 0;
 	}
 
+	/* Disable dither during power-up to prevent noise */
+	aw88399_dev_set_dither(aw88399_dev, false);
+
 	/* Step 1: Power on */
 	aw_dev_pwd(aw_dev, false);
 	usleep_range(AW88399_2000_US, AW88399_2000_US + 10);
@@ -463,10 +486,14 @@ static int aw88399_dev_start_internal(struct aw88399_dev *aw88399_dev)
 	/* Step 6: Enable I2S TX feedback */
 	aw_dev_i2s_tx_enable(aw_dev, true);
 
-	/* Step 7: Unmute */
+	/* Step 7: Restore dither if it was enabled in firmware */
+	if (aw88399_dev->dither_st)
+		aw88399_dev_set_dither(aw88399_dev, true);
+
+	/* Step 8: Unmute */
 	aw88399_lib_dev_mute(aw_dev, false);
 
-	/* Step 8: Clear interrupts */
+	/* Step 9: Clear interrupts */
 	aw_dev_clear_int_status(aw_dev);
 
 	aw_dev->status = AW88399_DEV_PW_ON;
@@ -603,6 +630,15 @@ int aw88399_dev_request_firmware(struct aw88399_dev *aw88399_dev)
 		return ret;
 	}
 
+	/* Capture dither state from firmware for later restore */
+	{
+		unsigned int reg_val;
+
+		ret = regmap_read(aw_dev->regmap, AW88399_DBGCTRL_REG, &reg_val);
+		if (!ret)
+			aw88399_dev->dither_st = reg_val & (~AW88399_DITHER_EN_MASK);
+	}
+
 	aw_dev->fade_in_time = AW88399_1000_US / 10;
 	aw_dev->fade_out_time = AW88399_1000_US >> 1;
 	aw_dev->prof_cur = aw_dev->prof_info.prof_desc[0].id;
@@ -695,6 +731,13 @@ int aw88399_dev_stop(struct aw88399_dev *aw88399_dev)
 
 	aw_dev_dsp_enable(aw_dev, false);
 	aw_dev_amppd(aw_dev, true);
+
+	/* If stop detected errors, re-upload DSP firmware to recover */
+	if (int_st) {
+		dev_warn(aw_dev->dev, "stop error detected, re-uploading DSP");
+		aw88395_dev_fw_update(aw_dev, AW88395_DSP_FW_UPDATE_ON, true);
+	}
+
 	aw_dev_pwd(aw_dev, true);
 
 	mutex_unlock(&aw88399_dev->lock);
